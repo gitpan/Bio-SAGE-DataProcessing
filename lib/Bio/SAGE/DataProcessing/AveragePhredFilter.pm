@@ -1,4 +1,4 @@
-# *%) $Id: AveragePhredFilter.pm,v 1.4 2004/06/20 00:20:33 scottz Exp $
+# *%) $Id: AveragePhredFilter.pm,v 1.6 2004/10/15 22:30:46 scottz Exp $
 #
 # Copyright (c) 2004 Scott Zuyderduyn <scottz@bccrc.ca>.
 # All rights reserved. This program is free software; you
@@ -140,7 +140,9 @@ B<Usage>
 
     my $this = shift;
     my $sequence = shift || die( $PACKAGE . "::is_valid no sequence defined." );
-    my $scores = shift || die( $PACKAGE . "::is_valid no scores defined." );
+    my $scores = shift; # || die( $PACKAGE . "::is_valid no scores defined." );
+
+    if( !defined( $scores ) ) { return 1; } # force valid
 
     if( $Bio::SAGE::DataProcessing::DEBUG >= 1 ) {
         print STDERR $PACKAGE . "::is_valid looking at " . $scores . "\n";
@@ -204,7 +206,7 @@ BC Cancer Research Centre
 
 =head1 VERSION
 
-  1.10
+  1.20
 
 =head1 SEE ALSO
 

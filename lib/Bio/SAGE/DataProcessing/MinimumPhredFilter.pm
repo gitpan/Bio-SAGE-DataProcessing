@@ -1,4 +1,4 @@
-# *%) $Id: MinimumPhredFilter.pm,v 1.4 2004/06/20 00:20:33 scottz Exp $
+# *%) $Id: MinimumPhredFilter.pm,v 1.5 2004/10/15 22:30:46 scottz Exp $
 #
 # Copyright (c) 2004 Scott Zuyderduyn <scottz@bccrc.ca>.
 # All rights reserved. This program is free software; you
@@ -198,7 +198,7 @@ BC Cancer Research Centre
 
 =head1 VERSION
 
-  1.10
+  1.20
 
 =head1 SEE ALSO
 

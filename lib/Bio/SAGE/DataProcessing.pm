@@ -1,4 +1,4 @@
-# *%) $Id: DataProcessing.pm,v 1.19 2004/06/20 00:20:32 scottz Exp $
+# *%) $Id: DataProcessing.pm,v 1.26 2004/10/15 22:30:46 scottz Exp $
 #
 # Copyright (c) 2004 Scott Zuyderduyn <scottz@bccrc.ca>.
 # All rights reserved. This program is free software; you
@@ -117,6 +117,11 @@ None (this module used to require the C<Statistics::Distributions> package).
 
 =head1 CHANGES
 
+  1.20 2004.10.15 - Minor spelling errors and misuse of terminology fixed in docs.
+                  - Module now allows FASTA files with a blank line folling the
+                    header (denoting an attempted read with no sequence), but prints
+                    a warning to STDERR that this has happened. Module died previously.
+  1.11 2004.06.20 - Added flag in constructor to keep duplicate ditags.
   1.10 2004.06.02 - Wrote new documentation and modified several methods to use the read-by-read
                     processing approach (see line below).
                   - Revamped the module to conserve memory. Reads are now processed one at a time
@@ -141,7 +146,7 @@ require AutoLoader;
 
 @ISA = qw( Exporter AutoLoader );
 @EXPORT = qw();
-$VERSION = "1.10";
+$VERSION = "1.11";
 
 #use Statistics::Distributions;
 use Bio::SAGE::DataProcessing::Filter;
@@ -239,7 +244,7 @@ sub new {
 #######################################################
 =pod
 
-=head2 new <$enzyme>, <\%protocol>
+=head2 new <$enzyme>, <\%protocol>, <$bKeepDuplicates>
 
 Constructor for a new Bio::SAGE::DataProcessing object.
 
@@ -293,6 +298,13 @@ I<\%protocol> (optional)
   Once the Bio::SAGE::DataProcessing object has been instantiated,
   the enzyme and protocol CANNOT be altered.
 
+I<$bKeepDuplicates> (optional)
+
+  If this argument is TRUE (non-zero) then ditags with
+  identical sequence will be kept.  The default behavior is
+  to discard these ditags as they likely represent
+  preferential PCR amplification.
+
 B<Usage>
 
   my $sage = Bio::SAGE::DataProcessing->new( $Bio::SAGE::DataProcessing::ENZYME_NLAIII,
@@ -309,6 +321,7 @@ B<Usage>
     my $this = shift;
     my $enzyme = shift || "CATG";
     my $protocol = shift || $PROTOCOL_SAGE;
+    my $bKeepDupes = shift || 0;
     my $class = ref( $this ) || $this;
     my $self = {};
     bless( $self, $class );
@@ -316,6 +329,7 @@ B<Usage>
     # set instance variables
     $self->{'enzyme'} = $enzyme;
     $self->{'protocol'} = $protocol;
+    $self->{'keep_duplicates'} = $bKeepDupes;
 #    $self->set_protocol( $protocol );
 
     $self->{'ditag_filter'} = $DEFAULT_DITAG_FILTER;
@@ -430,7 +444,7 @@ sub get_protocol {
 
 =head2 get_protocol
 
-Gets a copy (in other words, modifying to the
+Gets a copy (in other words, modifying the
 returned hash does not affect the object's settings)
 of the hash describing the protocol for this
 instance.
@@ -570,9 +584,10 @@ B<Usage>
 
                 if( $scores eq '' ) { $scores = undef; }
                 if( $this->process_read( $currseq, $scores ) == 0 ) {
-                    print STDERR "Error: " . $currid . "\n";
-                    print STDERR $currseq . "\n";
-                    print STDERR $scores . "\n";
+                    print STDERR "Non-fatal error on read >".$currid." ...\n";
+                    print STDERR "  Sequence: $currseq\n";
+                    print STDERR "  Scores  : " . ( defined($scores) ? $scores : '' ) . "\n";
+                    print STDERR "...continuing.\n";
                 }
                 $currseq = '';
                 $nRead++;
@@ -636,7 +651,7 @@ added to the list of currently processed ditags collected
 from previous calls to this method.
 
 Ditags with identical sequence (duplicate ditags) are
-considered the result of sequencing artifacts and only the
+considered the result of PCR artifacts and only the
 ditag with the highest "score" (as defined by the current
 ditag Bio::SAGE::DataProcessing::Filter) is retained.
 
@@ -672,6 +687,7 @@ B<Usage>
     my $read_scores = shift;
 
     if( !defined( $read_sequence ) ) { return 0; }
+    if( $read_sequence eq '' ) { return 0; }
 
     if( $DEBUG >= 1 ) {
         print STDERR $PACKAGE . "::process_read\n";
@@ -720,6 +736,15 @@ B<Usage>
 =cut
 
     my $this = shift;
+    if( $this->{'keep_duplicates'} == 1 ) {
+      my @arr;
+      foreach my $ditag ( keys %{$this->{'ditags'}} ) {
+        for( my $i = 0; $i < scalar( @{$this->{'ditags'}{$ditag}} ); $i++ ) {
+          push( @arr, $ditag );
+        }
+      }
+      return @arr;
+    }
     return keys %{$this->{'ditags'}};
 
 }
@@ -766,65 +791,75 @@ B<Usage>
     my @tags;
 
     foreach my $ditag ( keys %{$this->{'ditags'}} ) {
-        my $scores = ${$this->{'ditags'}}{$ditag};
-        if( $scores eq '' ) {
-            # no scores were provided
 
-        }
-
-        my $tag1 = substr( $ditag, $enzymeLength, $tagLength );
-        my $bIgnore = 0;
-        foreach my $ignoreTag ( @ignoreTags ) {
-            if( $ignoreTag eq $tag1 ) {
-                $bIgnore = 1;
-                last;
-            }
-        }
-        if( $bIgnore == 1 ) {
-            $this->{'stats'}->{'ignored_tags'}++;
+        my @scoresList;
+        if( $this->{'keep_duplicates'} == 1 ) {
+          @scoresList = @{$this->{'ditags'}{$ditag}};
         } else {
-            if( $tag1 !~ /^[ACGT]+$/ ) {
-                $this->{'stats'}->{'bad_tags'}++;
-            } else {
-                my $tagScores = '';
-                if( $scores ne '' ) {
-                    $tagScores = substr( $scores, 0, ( $tagLength+$enzymeLength )*3 );
-                }
-                if( $this->{'tag_filter'}->is_valid( $tag1, $tagScores ) ) {
-                    $this->{'stats'}->{'good_tags'}++;
-                    push( @tags, $tag1 );
-                } else {
-                    $this->{'stats'}->{'lowquality_tags'}++;
-                }
-            }
+          $scoresList[0] = ${$this->{'ditags'}}{$ditag};
         }
 
-        my $tag2 = substr( $ditag, length( $ditag ) - $tagLength - $enzymeLength, $tagLength );
-        $tag2 = reverse( $tag2 );
-        $tag2 =~ tr/ACGT/TGCA/;
-        $bIgnore = 0;
-        foreach my $ignoreTag ( @ignoreTags ) {
-            if( $ignoreTag eq $tag2 ) {
-                $bIgnore = 1;
-                last;
+        #my $scores = ${$this->{'ditags'}}{$ditag};
+        foreach my $scores ( @scoresList ) {
+
+            if( $scores eq '' ) {
+                # no scores were provided
             }
-        }
-        if( $bIgnore == 1 ) {
-            $this->{'stats'}->{'ignored_tags'}++;
-        } else {
-            if( $tag2 !~ /^[ACGT]+$/ ) {
-                $this->{'stats'}->{'bad_tags'}++;
-            } else {
-                my $tagScores = '';
-                if( $scores ne '' ) {
-                    $tagScores = substr( $scores, (length( $ditag )-$tagLength-$enzymeLength)*3, ($tagLength+$enzymeLength)*3 );
-                    $tagScores = join( " ", map { sprintf( "%2i", $_ ) } reverse split( /\s/, $tagScores ) );
+
+            my $tag1 = substr( $ditag, $enzymeLength, $tagLength );
+            my $bIgnore = 0;
+            foreach my $ignoreTag ( @ignoreTags ) {
+                if( $ignoreTag eq $tag1 ) {
+                    $bIgnore = 1;
+                    last;
                 }
-                if( $this->{'tag_filter'}->is_valid( $tag2, $tagScores ) ) {
-                    $this->{'stats'}->{'good_tags'}++;
-                    push( @tags, $tag2 );
+            }
+            if( $bIgnore == 1 ) {
+                $this->{'stats'}->{'ignored_tags'}++;
+            } else {
+                if( $tag1 !~ /^[ACGT]+$/ ) {
+                    $this->{'stats'}->{'bad_tags'}++;
                 } else {
-                    $this->{'stats'}->{'lowquality_tags'}++;
+                    my $tagScores = '';
+                    if( $scores ne '' ) {
+                        $tagScores = substr( $scores, 0, ( $tagLength+$enzymeLength )*3 );
+                    }
+                    if( $this->{'tag_filter'}->is_valid( $tag1, $tagScores ) ) {
+                        $this->{'stats'}->{'good_tags'}++;
+                        push( @tags, $tag1 );
+                    } else {
+                        $this->{'stats'}->{'lowquality_tags'}++;
+                    }
+                }
+            }
+
+            my $tag2 = substr( $ditag, length( $ditag ) - $tagLength - $enzymeLength, $tagLength );
+            $tag2 = reverse( $tag2 );
+            $tag2 =~ tr/ACGT/TGCA/;
+            $bIgnore = 0;
+            foreach my $ignoreTag ( @ignoreTags ) {
+                if( $ignoreTag eq $tag2 ) {
+                    $bIgnore = 1;
+                    last;
+                }
+            }
+            if( $bIgnore == 1 ) {
+                $this->{'stats'}->{'ignored_tags'}++;
+            } else {
+                if( $tag2 !~ /^[ACGT]+$/ ) {
+                    $this->{'stats'}->{'bad_tags'}++;
+                } else {
+                    my $tagScores = '';
+                    if( $scores ne '' ) {
+                        $tagScores = substr( $scores, (length( $ditag )-$tagLength-$enzymeLength)*3, ($tagLength+$enzymeLength)*3 );
+                        $tagScores = join( " ", map { sprintf( "%2i", $_ ) } reverse split( /\s/, $tagScores ) );
+                    }
+                    if( $this->{'tag_filter'}->is_valid( $tag2, $tagScores ) ) {
+                        $this->{'stats'}->{'good_tags'}++;
+                        push( @tags, $tag2 );
+                    } else {
+                        $this->{'stats'}->{'lowquality_tags'}++;
+                    }
                 }
             }
         }
@@ -1324,7 +1359,7 @@ sub __extract_ditags {
         }
 #        }
 
-        if( defined( ${$this->{'ditags'}}{$ditag_sequence} ) ) {
+        if( defined( ${$this->{'ditags'}}{$ditag_sequence} ) && $this->{'keep_duplicates'} == 0 ) {
             # we already have this ditag, which one is better?
             if( defined( $read_scores ) ) {
                 my $result = $this->{'ditag_filter'}->compare( $ditag_scores, $this->{'ditags'}{$ditag_sequence} );
@@ -1337,6 +1372,11 @@ sub __extract_ditags {
             next;
         }
 
+        if( $this->{'keep_duplicates'} == 1 ) {
+          $this->{'stats'}->{'good_ditags'}++;
+          push( @{$this->{'ditags'}{$ditag_sequence}}, $ditag_scores );
+          next;
+        }
 
         $this->{'stats'}->{'good_ditags'}++;
         $this->{'ditags'}{$ditag_sequence} = $ditag_scores;
@@ -1346,6 +1386,32 @@ sub __extract_ditags {
 }
 
 sub save {
+
+  my $this = shift;
+  my $handle = shift || *STDOUT;
+
+  print $handle '<?xml version="1.0">' . "\n";
+  print $handle "<DataProcessing>\n";
+
+  print $handle "  <params>\n";
+
+  print $handle "    <enzyme>" . $this->{'enzyme'} . "</enzyme>\n";
+  print $handle "    <keep_duplicates>" . $this->{'keep_duplicates'} . "</keep_duplicates>\n";
+
+
+  print $handle "  </params>\n";
+
+  print $handle "</DataProcessing>\n";
+
+#    $self->{'enzyme'} = $enzyme;
+    #$self->{'protocol'} = $protocol;
+    #$self->{'keep_duplicates'} = $bKeepDupes;
+#    $self->set_protocol( $protocol );
+
+#    $self->{'ditag_filter'} = $DEFAULT_DITAG_FILTER;
+    #$self->{'tag_filter'} = $DEFAULT_TAG_FILTER;
+
+
 
 }
 
@@ -1372,9 +1438,14 @@ under the same terms as Perl itself.
 Scott Zuyderduyn <scottz@bccrc.ca>
 BC Cancer Research Centre
 
+=head1 ACKNOWLEDGEMENTS
+
+  Greg Vatcher <gvatcher@bccrc.ca>
+  Canada's Michael Smith Genome Sciences Centre <http://www.bcgsc.ca>
+
 =head1 VERSION
 
-  1.10
+  1.20
 
 =head1 SEE ALSO
 
@@ -1383,6 +1454,7 @@ BC Cancer Research Centre
 =head1 TODO
 
   - Add more debugging messages.
+  - Method to dump/access statistics collected during processing.
 
 =cut
 
